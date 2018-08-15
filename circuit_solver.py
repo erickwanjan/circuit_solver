@@ -1,11 +1,12 @@
-from sympy import Symbol, solve, simplify
+from sympy import Symbol, solve, simplify, Matrix
+import sympy
 import copy
 import pprint
 
 class Circ():
     """
     All nodes and values are not case Sensitive (defaults to Capitol followed by lower case)
-    Gnd, jw, kbt: reserved names
+    Gnd, jw, kbt, Isource: reserved names
 
     Voltages start with V
     Inductors start with L
@@ -23,9 +24,9 @@ class Circ():
 
 
     def add_res(self, res, plus_term, minus_term):
-        res = format_string(res)
-        plus_term = format_string(plus_term)
-        minus_term = format_string(minus_term)
+        res = format_name(res)
+        plus_term = format_name(plus_term)
+        minus_term = format_name(minus_term)
 
         if res not in self.var_list:
             self.var_list[res] = Symbol(res)
@@ -44,11 +45,13 @@ class Circ():
         self.nodes[plus_term] += [StoredOp(plus_term, minus_term, res, top=False, add_jw=False, neg=True)]
         self.nodes[minus_term] += [StoredOp(plus_term, minus_term, res, top=False, add_jw=False, neg=False)]
 
+    def add_cond(self, cond, plus_term, minus_term):
+        self.add_vccs(cond, plus_term, minus_term, minus_term, plus_term)
 
     def add_cap(self, cap, plus_term, minus_term):
-        cap = format_string(cap)
-        plus_term = format_string(plus_term)
-        minus_term = format_string(minus_term)
+        cap = format_name(cap)
+        plus_term = format_name(plus_term)
+        minus_term = format_name(minus_term)
 
         if cap not in self.var_list:
             self.var_list[cap] = Symbol(cap)
@@ -69,9 +72,9 @@ class Circ():
 
 
     def add_ind(self, ind, plus_term, minus_term):
-        ind = format_string(ind)
-        plus_term = format_string(plus_term)
-        minus_term = format_string(minus_term)
+        ind = format_name(ind)
+        plus_term = format_name(plus_term)
+        minus_term = format_name(minus_term)
 
         if ind not in self.var_list:
             self.var_list[ind] = Symbol(ind)
@@ -90,13 +93,12 @@ class Circ():
         self.nodes[plus_term] += [StoredOp(plus_term, minus_term, ind, top=False, add_jw=True, neg=True)]
         self.nodes[minus_term] += [StoredOp(plus_term, minus_term, ind, top=False, add_jw=True, neg=False)]
 
-
-    def add_vcvs(self, gain, plus_term, minus_term, ref_plus, ref_minus):
-        gain = format_string(gain)
-        plus_term = format_string(plus_term)
-        minus_term = format_string(minus_term)
-        ref_plus = format_string(ref_plus)
-        ref_minus = format_string(ref_minus)
+    def add_vccs(self, gain, plus_term, minus_term, ref_plus, ref_minus):
+        gain = format_name(gain)
+        plus_term = format_name(plus_term)
+        minus_term = format_name(minus_term)
+        ref_plus = format_name(ref_plus)
+        ref_minus = format_name(ref_minus)
 
         if gain not in self.var_list:
             self.var_list[gain] = Symbol(gain)
@@ -119,14 +121,28 @@ class Circ():
         self.nodes[plus_term] += [StoredOp(ref_plus, ref_minus, gain, top=True, neg=False)]
         self.nodes[minus_term] += [StoredOp(ref_plus, ref_minus, gain, top=True, neg=True)]
 
+    def _add_isource(self, plus_term, minus_term):
+        if plus_term not in self.var_list:
+            self.var_list[plus_term] = Symbol(plus_term)
+        if minus_term not in self.var_list:
+            self.var_list[minus_term] = Symbol(minus_term)
+
+        if plus_term not in self.nodes:
+            self.nodes[plus_term] = []
+        if minus_term not in self.nodes:
+            self.nodes[minus_term] = []
+
+        if "Isource" not in self.var_list.keys():
+            self.var_list["Isource"] = Symbol("Isource")
+
+        self.nodes[plus_term] += [StoredOp(self.var_list["Isource"], neg=False, isource=True)]
+        self.nodes[minus_term] += [StoredOp(self.var_list["Isource"], neg=True, isource=True)]
 
     def _prep_solve(self):
         # for k in self.nodes.keys():
         #     self.nodes[k] = [x.construct(self.var_list) for x in self.nodes[k]]
         # pprint.pprint(self.nodes)
         # return
-        self._bck_nodes = copy.deepcopy(self.nodes)
-        self._bck_var_list = copy.deepcopy(self.var_list)
         remove_list = []
         for k in self.nodes.keys():
             node = self.nodes[k]
@@ -140,6 +156,9 @@ class Circ():
         for k in self.nodes.keys():
             self.nodes[k] = sum([x.construct(self.var_list) for x in self.nodes[k]])
 
+    def _save_state(self):
+        self._bck_nodes = copy.deepcopy(self.nodes)
+        self._bck_var_list = copy.deepcopy(self.var_list)
 
     def _finish_solve(self):
         self.nodes = self._bck_nodes
@@ -148,22 +167,17 @@ class Circ():
         self._bck_var_list = None
 
 
-    def get_tf(self, in_name, out_name, mode="v"):
-        in_name = format_string(in_name)
-        out_name = format_string(out_name)
+    def get_tf(self, in_name, out_name):
+        in_name = format_name(in_name)
+        out_name = format_name(out_name)
         if not in_name in self.var_list:
             raise ValueError("Input Node \'" + str(in_name) + "\' Does Not Exist")
         if not out_name in self.var_list:
             raise ValueError("Output Node" + str(out_name) + " Does Not Exist")
-        orig_mode = mode
-        mode = mode.lower()
-        if mode not in ["v", "i"]:
-            raise ValueError("Invalid Mode \'" + str(orig_mode) + "\'")
 
         self._prep_solve()
 
-        solve_path = self._get_solve_path(in_name, out_name)
-        print(solve_path)
+        solve_nodes = self._get_solve_path(in_name, out_name)
         replace_dict = dict()
         # ref_node = solve_path[0]
         for i in range(len(solve_path) - 1):
@@ -175,6 +189,61 @@ class Circ():
         elif mode == "v":
             tf = simplify(replace_dict[self.var_list[in_name]] / self.var_list[out_name])
 
+        self._finish_solve()
+        return tf
+
+    def get_imp(self, vout_plus, vout_minus="Gnd", iin_plus=None, iin_minus="Gnd"):
+        if iin_plus == None:
+            iin_plus = vout_plus
+        iin_plus = format_name(iin_plus)
+        iin_minus = format_name(iin_minus)
+        vout_plus = format_name(vout_plus)
+        vout_minus = format_name(vout_minus)
+        nodes_list = list(self.nodes.keys())
+
+        if vout_plus not in nodes_list:
+            vout_plus = "Gnd"
+        if vout_minus not in nodes_list:
+            vout_minus = "Gnd"
+        if iin_plus not in nodes_list:
+            iin_plus = "Gnd"
+        if iin_minus not in nodes_list:
+            iin_minus = "Gnd"
+
+        # if not iin_plus in self.var_list:
+        #     raise ValueError("Input Node \'" + str(iin_plus) + "\' Does Not Exist")
+        # if not vout_minus in self.var_list:
+        #     raise ValueError("Output Node" + str(vout_minus) + " Does Not Exist")
+        # if not iin_plus in self.var_list:
+        #     raise ValueError("Input Node \'" + str(iin_plus) + "\' Does Not Exist")
+        # if not iin_minus in self.var_list:
+        #     raise ValueError("Input Node \'" + str(iin_minus) + "\' Does Not Exist")
+
+        self._save_state()
+        self._add_isource(iin_plus, iin_minus)
+        self._prep_solve()
+
+        solve_nodes = list(self.nodes.keys())
+        all_eq_list = []
+        remainder_list = []
+        for cur_node_name in solve_nodes:
+            cur_eq_list = []
+            cur_expr = self.nodes[cur_node_name].expand()
+            cur_sum = 0
+            for cur_coeff_name in solve_nodes:
+                cur_coeff = cur_expr.coeff(self.var_list[cur_coeff_name])
+                cur_eq_list += [cur_coeff]
+                cur_sum += cur_coeff * self.var_list[cur_coeff_name]
+            remainder = simplify(cur_expr - cur_sum)
+            remainder_list += [remainder]
+            all_eq_list += [cur_eq_list]
+
+        a_matrix = Matrix(all_eq_list)
+        b_matrix = Matrix(remainder_list)
+        soln = a_matrix.LUsolve(b_matrix)
+        vplus = soln[solve_nodes.index(vout_plus)] if vout_plus != "Gnd" else 0
+        vminus = soln[solve_nodes.index(vout_minus)] if vout_minus != "Gnd" else 0
+        tf = simplify((vplus - vminus) / self.var_list["Isource"])
         self._finish_solve()
         return tf
 
@@ -192,11 +261,14 @@ class Circ():
                     else:
                         unchanged = False
                         break
-                if unchanged:
-                    v = missing_node
-            traversed_nodes += [v]
-            cur_node = cur_graph[v]
-            cur_node_name = v
+            if unchanged:
+                v = traversed_nodes[traversed_nodes.index(cur_node_name) - 1]
+                cur_node = cur_graph[v]
+                cur_node_name = v
+            else:
+                traversed_nodes += [v]
+                cur_node = cur_graph[v]
+                cur_node_name = v
         return traversed_nodes
 
     def _get_imp_path(self, in_name):
@@ -227,33 +299,33 @@ class Circ():
         return leaf_list
 
 
-    def get_imp(self, in_name):
-        in_name = format_string(in_name)
-        if not in_name in self.var_list:
-            raise ValueError("Input Node \'" + str(in_name) + "\' Does Not Exist")
+    # def get_imp(self, in_name):
+    #     in_name = format_name(in_name)
+    #     if not in_name in self.var_list:
+    #         raise ValueError("Input Node \'" + str(in_name) + "\' Does Not Exist")
 
-        self._prep_solve()
+    #     self._prep_solve()
 
-        solve_path = self._get_imp_path(in_name)[::-1]
-        replace_dict = dict()
-        print(solve_path)
+    #     solve_path = self._get_imp_path(in_name)[::-1]
+    #     replace_dict = dict()
+    #     print(solve_path)
 
-        for i in range(len(solve_path) - 1):
-            x = solve(self.nodes[solve_path[i]].xreplace(replace_dict), self.var_list[solve_path[i]])[0]
-            print(solve_path[i], x)
-            replace_dict[self.var_list[solve_path[i]]] = solve(self.nodes[solve_path[i]].xreplace(replace_dict), self.var_list[solve_path[i]])[0]
-            for k in replace_dict.keys():
-                replace_dict[k] = replace_dict[k].xreplace(replace_dict)
+    #     for i in range(len(solve_path) - 1):
+    #         x = solve(self.nodes[solve_path[i]].xreplace(replace_dict), self.var_list[solve_path[i]])[0]
+    #         print(solve_path[i], x)
+    #         replace_dict[self.var_list[solve_path[i]]] = solve(self.nodes[solve_path[i]].xreplace(replace_dict), self.var_list[solve_path[i]])[0]
+    #         for k in replace_dict.keys():
+    #             replace_dict[k] = replace_dict[k].xreplace(replace_dict)
 
 
-        tf = simplify(self.var_list[in_name] / (self.nodes[in_name].xreplace(replace_dict)))
-        self._finish_solve()
-        return tf
+    #     tf = simplify(self.var_list[in_name] / (self.nodes[in_name].xreplace(replace_dict)))
+    #     self._finish_solve()
+    #     return tf
 
     def print_contents(self):
-        # DONT CALL FOR NOW
         if type(self.nodes[list(self.nodes.keys())[0]]) == list:
             mod = True
+            self._save_state()
             self._prep_solve()
         else:
             mod = False
@@ -272,16 +344,23 @@ class Circ():
 
 class StoredOp():
 
-    def __init__(self, plus, minus, factor, top=True, add_jw=False, neg=False):
+    def __init__(self, plus="", minus="", factor=1, top=True, add_jw=False, neg=False, isource=False):
         self.plus = plus
         self.minus = minus
         self.factor = factor
         self.top = top
         self.add_jw = add_jw
         self.neg = neg
+        self.isource = isource
 
 
     def construct(self, var_list):
+        if self.isource:
+            if self.neg:
+                return -var_list["Isource"]
+            else:
+                return var_list["Isource"]
+
         plus = var_list[self.plus] if self.plus != "Gnd" else 0
         minus = var_list[self.minus] if self.minus != "Gnd" else 0
         diff = plus - minus
@@ -299,7 +378,7 @@ class StoredOp():
         return new_expr
 
 
-def format_string(s):
+def format_name(s):
     c = s[0]
     rest = s[1:]
     if not c.isalpha():
@@ -323,56 +402,64 @@ def make_var(circ):
 def clear_var():
     pass
 if __name__ == "__main__":
-    Rfb = Symbol("Rfb")
-    Gm = Symbol("Gm")
-    Cpd = Symbol("Cpd")
-    L = Symbol("L")
-    Ro = Symbol("Ro")
-    Vout = Symbol("Vout")
-    Vin = Symbol("Vin")
-    Vmid = Symbol("Vmid")
-    Gnd = Symbol("Gnd")
-    jw = Symbol("jw")
+    # Rfb = Symbol("Rfb")
+    # Gm = Symbol("Gm")
+    # Cpd = Symbol("Cpd")
+    # L = Symbol("L")
+    # Ro = Symbol("Ro")
+    # Vout = Symbol("Vout")
+    # Vin = Symbol("Vin")
+    # Vmid = Symbol("Vmid")
+    # Gnd = Symbol("Gnd")
+    # jw = Symbol("jw")
 
     circ = Circ()
     circ.add_res("rfb", "vin", "vout")
-    circ.add_res("ro", "gnd", "vout")
-    circ.add_vcvs("gm", "vout", "gnd", "vin", "gnd")
+    circ.add_cond("gds", "vout", "gnd")
+    circ.add_vccs("gm", "vout", "gnd", "gnd", "Vin")
     circ.add_cap("cpd", "vin", "gnd")
 
     # circ.print_contents()
-    tf = circ.get_tf("Vin", "Vout", "i")
-    print(tf)
-    print()
+    tf = circ.get_imp(vout_plus="Vout", iin_plus="Vin")
+    nf = circ.get_imp(vout_plus="Vout", iin_plus="Vout")
+    print("tf", tf)
+    print("nf", nf)
+    print('nf/tf', nf / tf)
 
-    print("Test 2")
-    circ = Circ()
-    circ.add_res("rfb", "vmid", "vout")
-    circ.add_res("ro", "gnd", "vout")
-    circ.add_vcvs("gm", "vout", "gnd", "vmid", "gnd")
-    circ.add_cap("cpd", "vin", "gnd")
-    circ.add_ind("l", "vin", "vmid")
+    # print("Test 2")
+    # circ = Circ()
+    # circ.add_res("rfb", "vmid", "vout")
+    # circ.add_res("ro", "gnd", "vout")
+    # circ.add_vccs("gm", "vout", "gnd", "vmid", "gnd")
+    # circ.add_cap("cpd", "vin", "gnd")
+    # circ.add_ind("l", "vin", "vmid")
 
     # circ.print_contents()
-    # tf = circ.get_tf("Vin", "Vout", "i")
-    print(tf)
-    print()
-    imp = circ.get_imp("Vout")
-    print(imp)
-    print()
+    # imp = circ.get_imp(vout_plus="Vout", iin_plus="Vin")
+    # print(imp)
+    # print()
 
 
-    print("Test 3")
+    # print("Test 3")
+    # circ = Circ()
+    # circ.add_cap("cpd", "vin", "gnd")
+    # circ.add_res("rfb", "vout", "vin")
+    # circ.add_vccs("gm", "gnd", "vmid", "vin", "gnd")
+    # circ.add_vccs("gds", "gnd", "Vmid", "vmid", "gnd")
+    # circ.add_vccs("A", "gnd", "Vout", "Vmid", "gnd")
+    # circ.add_vccs("gout", "Vout", "gnd", "gnd", "vout")
+    # tf = circ.get_imp(vout_plus="Vout", iin_plus="Vin")
+    # nf = circ.get_imp(vout_plus="Vout", iin_plus="Vmid")
+    # print(imp)
+
+    print("Test 4")
     circ = Circ()
     circ.add_cap("cpd", "vin", "gnd")
     circ.add_res("rfb", "vout", "vin")
-    circ.add_vcvs("gm", "gnd", "vmid", "vin", "gnd")
-    circ.add_vcvs("gds", "gnd", "Vmid", "vmid", "gnd")
-    circ.add_vcvs("A", "gnd", "Vout", "Vmid", "gnd")
-    circ.add_vcvs("gout", "Vout", "gnd", "gnd", "vout")
-    tf = circ.get_tf("Vin", "Vout", "i")
-    nf = circ.get_tf("Vmid", "Vout", "i")
-    print(tf)
-    print(imp)
-
+    circ.add_vccs("gm_inv", "gnd", "vmid", "vin", "gnd")
+    circ.add_vccs("gds_inv", "gnd", "Vmid", "vmid", "gnd")
+    circ.add_vccs("gm_boost", "gnd", "Vout", "Vmid", "gnd")
+    circ.add_vccs("gds_boost", "Vout", "gnd", "gnd", "vout")
+    tf = circ.get_imp(vout_plus="Vout", iin_plus="Vin")
+    nf = circ.get_imp(vout_plus="Vout", iin_plus="Vmid")
 
