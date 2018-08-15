@@ -210,8 +210,7 @@ class Circ():
         self._prep_solve()
 
         solve_nodes = list(self.nodes.keys())
-        # solve_nodes = self._get_solve_nodes([n for n in [iin_plus, iin_minus, vout_plus, vout_minus] if n != "Gnd"])
-        solve_nodes = self._get_solve_nodes_naive([n for n in [iin_plus, iin_minus, vout_plus, vout_minus] if n != "Gnd"])
+        solve_nodes = self._get_solve_nodes([n for n in [iin_plus, iin_minus, vout_plus, vout_minus] if n != "Gnd"])
         all_eq_list = []
         remainder_list = []
         for cur_node_name in solve_nodes:
@@ -235,63 +234,13 @@ class Circ():
         self._finish_solve()
         return tf
 
-    def _get_solve_path(self, start, end):
-        cur_graph = self._build_graph()
-        cur_node = cur_graph[end]
-        cur_node_name = end
-        traversed_nodes = [end]
-        while cur_node_name != start:
-            unchanged = True
-            for v in cur_node:
-                if v not in traversed_nodes:
-                    if start == v and len(traversed_nodes) < len(cur_node):
-                        pass
-                    else:
-                        unchanged = False
-                        break
-            if unchanged:
-                v = traversed_nodes[traversed_nodes.index(cur_node_name) - 1]
-                cur_node = cur_graph[v]
-                cur_node_name = v
-            else:
-                traversed_nodes += [v]
-                cur_node = cur_graph[v]
-                cur_node_name = v
-        return traversed_nodes
-
-    def _get_solve_nodes_naive(self, nodes_list):
+    def _get_solve_nodes(self, nodes_list):
         all_symbols = set(chain(*[self._get_expr_nodes(n) for n in nodes_list]))
         nodes_list = set(nodes_list)
         while all_symbols != nodes_list:
             nodes_list = all_symbols
             all_symbols = set(chain(*[self._get_expr_nodes(n) for n in nodes_list]))
         return list(nodes_list)
-
-    def _get_solve_nodes(self, nodes_list):
-        # all_symbols = set(chain([self._get_expr_nodes(self.nodes[n]) for n in nodes_list]**))
-        num_eq = len(nodes_list)
-        num_symbols = len(all_symbols)
-        solve_nodes = nodes_list
-        cur_node_name = nodes_list[0]
-        cur_node = self.nodes[cur_node_name]
-        while num_eq < num_symbols:
-            for v in self._get_expr_nodes(cur_node):
-                if v not in solve_nodes:
-                    overlap, _, extra_newCirc._num_overlap(self._get_expr_nodes[cur_node], all_symbols)
-                    if overlap < 2:
-                        pass
-                    else:
-                        unchanged = False
-                        break
-            if unchanged:
-                # v = traversed_nodes[traversed_nodes.index(cur_node_name) + 1]
-                # cur_node = cur_graph[v]
-                # cur_node_name = v
-                pass
-            else:
-                # solve_nodes +=
-                pass
-        return solve_nodes
 
     def _get_expr_nodes(self, node_name, ret_all=False):
         expr = self.nodes[node_name]
@@ -306,33 +255,6 @@ class Circ():
             if elem in lst_b:
                 count += 1
         return count, len(lst_a) - count, len(lst_b) - count
-
-    def _get_imp_path(self, in_name):
-        cur_graph = self._build_graph()
-        cur_node = cur_graph[in_name]
-        cur_node_name = in_name
-        traversed_nodes = [in_name]
-        while True:
-            unchanged = True
-            for v in cur_node:
-                if v not in traversed_nodes:
-                    unchanged = False
-                    break
-            if unchanged:
-                return traversed_nodes
-            traversed_nodes += [v]
-            cur_node = cur_graph[v]
-            cur_node_name = v
-
-
-    def _build_graph(self):
-        leaf_list = dict()
-        for k in self.nodes.keys():
-            leaf_list[k] = []
-            for v in self.var_list.keys():
-                if self.nodes[k].has(v) and v != k and "V" in v:
-                    leaf_list[k] += [v]
-        return leaf_list
 
     def print_contents(self):
         if type(self.nodes[list(self.nodes.keys())[0]]) == list:
