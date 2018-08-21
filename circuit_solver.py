@@ -19,8 +19,13 @@ class Circ():
     w = Symbol("w")
     j = Symbol("j")
     kbt = Symbol("kbt")
+    # isource = Symbol("Isource")
 
     def __init__(self):
+        self.nodes = dict()
+        self.var_list = dict()
+
+    def clear(self):
         self.nodes = dict()
         self.var_list = dict()
 
@@ -44,7 +49,7 @@ class Circ():
         self.nodes[plus_term] += [StoredOp(plus_term, minus_term, res, top=False, add_jw=False, neg=True)]
         self.nodes[minus_term] += [StoredOp(plus_term, minus_term, res, top=False, add_jw=False, neg=False)]
 
-    def add_cond(self, cond, plus_term, minus_term):
+    def add_conductance(self, cond, plus_term, minus_term):
         self.add_vccs(cond, plus_term, minus_term, minus_term, plus_term)
 
     def add_cap(self, cap, plus_term, minus_term):
@@ -109,9 +114,17 @@ class Circ():
             self.nodes[plus_term] = []
         if minus_term not in self.nodes:
             self.nodes[minus_term] = []
+        if ref_plus not in self.nodes:
+            self.nodes[ref_plus] = []
+        if ref_minus not in self.nodes:
+            self.nodes[ref_minus] = []
 
         self.nodes[plus_term] += [StoredOp(ref_plus, ref_minus, gain, top=True, neg=False)]
         self.nodes[minus_term] += [StoredOp(ref_plus, ref_minus, gain, top=True, neg=True)]
+
+    def add_transistor(self, vd, vg, vs='Gnd', gm=None, gds=None, ro=None, A=None, ft=None, cl=None):
+        # TODO
+        pass
 
     def _add_isource(self, plus_term, minus_term):
         if plus_term not in self.var_list:
@@ -130,16 +143,16 @@ class Circ():
         self.nodes[plus_term] += [StoredOp(self.var_list["Isource"], neg=False, isource=True)]
         self.nodes[minus_term] += [StoredOp(self.var_list["Isource"], neg=True, isource=True)]
 
-    def _prep_solve(self):
+    def _prep_solve(self, exclude_list=[]):
         remove_list = []
         for k in self.nodes.keys():
             node = self.nodes[k]
-            if len(node) == 1 or k == "Gnd":
+            if (len(node) == 1 or k == "Gnd") and k not in exclude_list:
                 remove_list += [k]
                 self.var_list[k] = 0
         for k in remove_list:
             self.nodes.pop(k)
-            self.var_list.pop(k)
+            # self.var_list.pop(k)
 
         for k in self.nodes.keys():
             self.nodes[k] = sum([x.construct(self.var_list) for x in self.nodes[k]])
@@ -154,27 +167,54 @@ class Circ():
         self.var_list = self._bck_var_list
         self._bck_var_list = None
 
-    def get_tf(self, in_name, out_name):
-        in_name = Circ.format_name(in_name)
-        out_name = Circ.format_name(out_name)
-        if not in_name in self.var_list:
-            raise ValueError("Input Node \'" + str(in_name) + "\' Does Not Exist")
-        if not out_name in self.var_list:
-            raise ValueError("Output Node" + str(out_name) + " Does Not Exist")
+    def get_tf(self, vout_plus, vin_plus, vout_minus="Gnd", vin_minus="Gnd"):
+        if vin_plus == None:
+            vin_plus = vout_plus
+        vin_plus = Circ.format_name(vin_plus)
+        vin_minus = Circ.format_name(vin_minus)
+        vout_plus = Circ.format_name(vout_plus)
+        vout_minus = Circ.format_name(vout_minus)
+        nodes_list = list(self.nodes.keys())
+        print(nodes_list)
 
-        self._prep_solve()
+        # if vout_plus not in nodes_list:
+        #     vout_plus = "Gnd"
+        # if vout_minus not in nodes_list:
+        #     vout_minus = "Gnd"
+        # if vin_plus not in nodes_list:
+        #     vin_plus = "Gnd"
+        # if vin_minus not in nodes_list:
+        #     vin_minus = "Gnd"
 
-        solve_nodes = self._get_solve_path(in_name, out_name)
-        replace_dict = dict()
-        for i in range(len(solve_path) - 1):
-            self.nodes[solve_path[i]] = self.nodes[solve_path[i]].xreplace(replace_dict)
-            replace_dict[self.var_list[solve_path[i + 1]]] = solve(self.nodes[solve_path[i]], self.var_list[solve_path[i + 1]])[0]
+        if not vout_plus in self.var_list:
+            raise ValueError("Input Node \'" + str(vout_plus) + "\' Does Not Exist")
+        if not vout_minus in self.var_list:
+            raise ValueError("Input Node \'" + str(vout_minus) + "\' Does Not Exist")
+        if not vin_plus in self.var_list:
+            raise ValueError("Input Node \'" + str(vin_plus) + "\' Does Not Exist")
+        if not vin_minus in self.var_list:
+            raise ValueError("Input Node \'" + str(vin_minus) + "\' Does Not Exist")
 
-        if mode == "i":
-            tf = simplify((self.var_list[out_name] / self.nodes[in_name]).xreplace(replace_dict))
-        elif mode == "v":
-            tf = simplify(replace_dict[self.var_list[in_name]] / self.var_list[out_name])
+        self._save_state()
+        self._prep_solve(exclude_list=[n for n in [vin_plus, vin_minus] if n != "Gnd"])
 
+        # solve_nodes = list(self.nodes.keys())
+        in_nodes = [n for n in [vin_plus, vin_minus] if n != "Gnd"]
+        out_nodes = [n for n in [vout_plus, vout_minus] if n != "Gnd"]
+        solve_nodes = self._get_tf_nodes(in_nodes=in_nodes, out_nodes=out_nodes)
+        soln = self._solve_matrix(solve_nodes)
+        print(soln)
+        # print("SN", solve_nodes)
+
+        # if (vout_plus not in solve_nodes and vout_plus != "Gnd") or (vout_minus not in solve_nodes and vout_minus != "Gnd"):
+        #     raise ValueError("Impossible to calculate transfer function. Output voltage is independent of input voltage.")
+        # if (vin_plus not in solve_nodes and vin_plus != "Gnd") or (vin_minus not in solve_nodes and vin_minus != "Gnd"):
+        #     raise ValueError("Impossible to calculate transfer function. Output voltage is independent of input voltage.")
+        vout_plus_val = soln[solve_nodes.index(vout_plus)] if vout_plus != "Gnd" else 0
+        vout_minus_val = soln[solve_nodes.index(vout_minus)] if vout_minus != "Gnd" else 0
+        vin_plus_val = self.var_list[vin_plus] if vin_plus != "Gnd" else 0
+        vin_minus_val = self.var_list[vin_minus] if vin_minus != "Gnd" else 0
+        tf = simplify((vout_plus_val - vout_minus_val) / (vin_plus_val - vin_minus_val))
         self._finish_solve()
         return tf
 
@@ -209,8 +249,40 @@ class Circ():
         self._add_isource(iin_plus, iin_minus)
         self._prep_solve()
 
-        solve_nodes = list(self.nodes.keys())
-        solve_nodes = self._get_solve_nodes([n for n in [iin_plus, iin_minus, vout_plus, vout_minus] if n != "Gnd"])
+        # solve_nodes = list(self.nodes.keys())
+        solve_nodes = self._get_imp_nodes([n for n in [iin_plus, iin_minus, vout_plus, vout_minus] if n != "Gnd"])
+        soln = self._solve_matrix(solve_nodes)
+
+        if (vout_plus not in solve_nodes and vout_plus != "Gnd") or (vout_minus not in solve_nodes and vout_minus != "Gnd"):
+            raise ValueError("Impossible to calculate transfer function. Output voltage is independent of input current. (Most likely infinite impedence)")
+        vplus = soln[solve_nodes.index(vout_plus)] if vout_plus != "Gnd" else 0
+        vminus = soln[solve_nodes.index(vout_minus)] if vout_minus != "Gnd" else 0
+        tf = simplify((vplus - vminus) / self.var_list["Isource"])
+        self._finish_solve()
+        return tf
+
+    def _get_tf_nodes(self, in_nodes, out_nodes):
+        """
+        in: Vin
+        out: Vout
+
+        Vout: (Vout, Vin)
+        """
+        nodes_list = out_nodes
+        all_symbols = set(chain(*[self._get_expr_nodes(n) for n in nodes_list]))
+        while all_symbols != set(list(nodes_list) + in_nodes):
+            nodes_list = all_symbols
+            all_symbols = set(chain(*[self._get_expr_nodes(n) for n in nodes_list]))
+        return list(nodes_list)
+
+    def _get_imp_nodes(self, nodes_list):
+        all_symbols = set(chain(*[self._get_expr_nodes(n) for n in nodes_list]))
+        while all_symbols != nodes_list:
+            nodes_list = all_symbols
+            all_symbols = set(chain(*[self._get_expr_nodes(n) for n in nodes_list]))
+        return list(nodes_list)
+
+    def _solve_matrix(self, solve_nodes):
         all_eq_list = []
         remainder_list = []
         for cur_node_name in solve_nodes:
@@ -221,26 +293,14 @@ class Circ():
                 cur_coeff = cur_expr.coeff(self.var_list[cur_coeff_name])
                 cur_eq_list += [cur_coeff]
                 cur_sum += cur_coeff * self.var_list[cur_coeff_name]
-            remainder = simplify(cur_expr - cur_sum)
+            remainder = simplify(cur_sum - cur_expr)
             remainder_list += [remainder]
             all_eq_list += [cur_eq_list]
 
         a_matrix = Matrix(all_eq_list)
         b_matrix = Matrix(remainder_list)
         soln = a_matrix.LUsolve(b_matrix)
-        vplus = soln[solve_nodes.index(vout_plus)] if vout_plus != "Gnd" else 0
-        vminus = soln[solve_nodes.index(vout_minus)] if vout_minus != "Gnd" else 0
-        tf = simplify((vplus - vminus) / self.var_list["Isource"])
-        self._finish_solve()
-        return tf
-
-    def _get_solve_nodes(self, nodes_list):
-        all_symbols = set(chain(*[self._get_expr_nodes(n) for n in nodes_list]))
-        nodes_list = set(nodes_list)
-        while all_symbols != nodes_list:
-            nodes_list = all_symbols
-            all_symbols = set(chain(*[self._get_expr_nodes(n) for n in nodes_list]))
-        return list(nodes_list)
+        return soln
 
     def _get_expr_nodes(self, node_name, ret_all=False):
         expr = self.nodes[node_name]
@@ -263,17 +323,22 @@ class Circ():
             self._prep_solve()
         else:
             mod = False
-        print("NODES INFO\n")
+        print("NODES INFO")
         for k in self.nodes.keys():
             print("Node", k)
             pprint.pprint(self.nodes[k])
             print()
 
-        print()
         print("Variables")
         pprint.pprint(list(self.var_list.keys()))
         if mod:
             self._finish_solve()
+
+    def make_exec_cmd(self):
+        exec_str = ""
+        for var in set(list(self.var_list.keys()) + ['j', 'w', 'jw', 'kbt', 'Gnd']):
+            exec_str += var + "=Symbol(\'" + var + "\')\n"
+        return exec_str
 
     def format_name(s):
         c = s[0]
@@ -318,6 +383,7 @@ class StoredOp():
 
 
 if __name__ == "__main__":
+    pass
     # Rfb = Symbol("Rfb")
     # Gm = Symbol("Gm")
     # Cpd = Symbol("Cpd")
@@ -329,18 +395,19 @@ if __name__ == "__main__":
     # Gnd = Symbol("Gnd")
     # jw = Symbol("jw")
 
-    circ = Circ()
-    circ.add_res("rfb", "vin", "vout")
-    circ.add_cond("gds", "vout", "gnd")
-    circ.add_vccs("gm", "vout", "gnd", "gnd", "Vin")
-    circ.add_cap("cpd", "vin", "gnd")
+    # print("Test 1")
+    # circ = Circ()
+    # circ.add_res("rfb", "vin", "vout")
+    # circ.add_conductance("gds", "vout", "gnd")
+    # circ.add_vccs("gm", "vout", "gnd", "gnd", "Vin")
+    # circ.add_cap("cpd", "vin", "gnd")
 
     # circ.print_contents()
-    tf = circ.get_imp(vout_plus="Vout", iin_plus="Vin")
-    nf = circ.get_imp(vout_plus="Vout", iin_plus="Vout")
-    print("tf", tf)
-    print("nf", nf)
-    print('nf/tf', nf / tf)
+    # tf1 = circ.get_imp(vout_plus="Vout", iin_plus="Vin")
+    # nf1 = circ.get_imp(vout_plus="Vout", iin_plus="Vout")
+    # print("tf", tf)
+    # print("nf", nf)
+    # print('nf/tf', nf / tf)
 
     # print("Test 2")
     # circ = Circ()
@@ -367,14 +434,73 @@ if __name__ == "__main__":
     # nf = circ.get_imp(vout_plus="Vout", iin_plus="Vmid")
     # print(imp)
 
-    print("Test 4")
-    circ = Circ()
-    circ.add_cap("cpd", "vin", "gnd")
-    circ.add_res("rfb", "vout", "vin")
-    circ.add_vccs("gm_inv", "gnd", "vmid", "vin", "gnd")
-    circ.add_vccs("gds_inv", "gnd", "Vmid", "vmid", "gnd")
-    circ.add_vccs("gm_boost", "gnd", "Vout", "Vmid", "gnd")
-    circ.add_vccs("gds_boost", "Vout", "gnd", "gnd", "vout")
-    tf = circ.get_imp(vout_plus="Vout", iin_plus="Vin")
-    nf = circ.get_imp(vout_plus="Vout", iin_plus="Vmid")
+    # print("Test 4")
+    # circ = Circ()
+    # circ.add_cap("cpd", "vin", "gnd")
+    # circ.add_res("rfb", "vout", "vin")
+    # circ.add_vccs("gm_inv", "gnd", "vmid", "vin", "gnd")
+    # circ.add_vccs("gds_inv", "gnd", "Vmid", "vmid", "gnd")
+    # circ.add_vccs("gm_boost", "gnd", "Vout", "Vmid", "gnd")
+    # circ.add_vccs("gds_boost", "Vout", "gnd", "gnd", "vout")
+    # tf = circ.get_imp(vout_plus="Vout", iin_plus="Vin")
+    # nf = circ.get_imp(vout_plus="Vout", iin_plus="Vmid")
+
+    # print("Test 5")
+    # circ = Circ()
+    # circ.add_vccs("g1", "V2", "gnd", "V1", "gnd")
+    # circ.add_vccs("g2", "V2", "gnd", "V3", "gnd")
+    # circ.add_res("r1", "v1", "v3")
+    # circ.add_res("r2", "v1", "gnd")
+    # circ.add_res("r3", "gnd", "v3")
+
+    # print("Test 6")
+    # circ = Circ()
+    # circ.add_cap("cpd", "vin", "gnd")
+    # circ.add_res("rfb", "vout", "vin")
+    # circ.add_vccs("gm", "gnd", "vout", "vin", "gnd")
+    # circ.add_conductance("gds", "vout", "gnd")
+    # circ.add_cap("cload", "vout", "gnd")
+    # tf_orig = circ.get_imp(vout_plus="Vout", iin_plus="Vin")
+    # circ.clear()
+
+    # circ.add_cap("cpd", "vin", "gnd")
+    # circ.add_res("rfb", "vout", "vin")
+    # circ.add_vccs("gm", "gnd", "vmid", "vin", "gnd")
+    # circ.add_conductance("gds", "vmid", "gnd")
+    # circ.add_res("rwire", "vout", "vmid")
+    # circ.add_cap("cload", "vout", "gnd")
+    # tf_res_top = circ.get_imp(vout_plus="Vout", iin_plus="Vin")
+    # circ.clear()
+
+    # circ = Circ()
+    # circ.add_cap("cpd", "vin", "gnd")
+    # circ.add_res("rfb", "vout", "vmid")
+    # circ.add_vccs("gm", "gnd", "vout", "vmid", "gnd")
+    # circ.add_conductance("gds", "vout", "gnd")
+    # circ.add_res("rwire", "vmid", "vin")
+    # circ.add_cap("cload", "vout", "gnd")
+    # tf_res_bot = circ.get_imp(vout_plus="Vout", iin_plus="Vin")
+
+    # print("Test 7")
+    # circ = Circ()
+    # circ.add_vccs("Gm1", "Gnd", "Vout", "Vin", "Gnd")
+    # circ.add_vccs("Gm2", "Gnd", "Vin", "Vout", "Gnd")
+    # circ.add_conductance("Gds1", "Gnd", "Vout")
+    # circ.add_conductance("Gds2", "Gnd", "Vin")
+    # circ.add_res("Rfb", "Vin", "Vout")
+    # circ.add_cap("Cpd", "Vin", "Gnd")
+    # tf = circ.get_imp(vout_plus="Vin", iin_plus="Vin")
+
+    # print("Test 8")
+    # circ = Circ()
+    # circ.add_vccs("Gm1", "Gnd", "Vmid", "Vin", "Gnd")
+    # circ.add_vccs("Gm2", "Gnd", "Vout", "Vmid", "Gnd")
+    # circ.add_conductance("Gds1", "Gnd", "Vout")
+    # circ.add_conductance("Gds2", "Gnd", "Vmid")
+    # tf = circ.get_tf(vout_plus="Vout", vin_plus="Vin")
+    # tf_mid = circ.get_tf(vout_plus="Vmid", vin_plus="Vin")
+
+
+
+
 
